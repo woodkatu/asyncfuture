@@ -28,7 +28,8 @@ script:
     - source qtci/path.env
     - install-qt ${QT_VERSION} `pwd`/Qt
     - ls
-    - source qt-${QT_VERSION}.env
+    - ls Qt
+    - source Qt/qt-${QT_VERSION}.env
     - mkdir build/
     - cd build
     - run-unittests ../tests/asyncfutureunittests/asyncfutureunittests.pro
