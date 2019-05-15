@@ -26,7 +26,7 @@ script:
     - git clone https://github.com/benlau/qtci.git
     - export QT_CI_PACKAGES=${TARGET_PACKAGE} 
     - source qtci/path.env
-    - install-qt-online ${QT_VERSION} `pwd`/Qt
+    - install-qt ${QT_VERSION} `pwd`/Qt
     - ls
     - source qt-${QT_VERSION}.env
     - mkdir build/
