@@ -1264,46 +1264,45 @@ public:
         this->m_future = deferredFuture->future();
     }
 
-    void complete(QFuture<QFuture<T>> future) {
+    void complete(QFuture<QFuture<T>> future) const {
         deferredFuture->complete(future);
     }
 
-    void complete(QFuture<T> future) {
+    void complete(QFuture<T> future) const {
         deferredFuture->complete(future);
     }
 
-    void complete(T value)
-    {
+    void complete(T value) const {
         deferredFuture->complete(value);
     }
 
-    void complete(QList<T> value) {
+    void complete(QList<T> value) const {
         deferredFuture->complete(value);
     }
 
     template <typename ANY>
-    void cancel(QFuture<ANY> future) {
+    void cancel(QFuture<ANY> future) const {
         deferredFuture->cancel(future);
     }
 
-    void cancel() {
+    void cancel() const {
         deferredFuture->cancel();
     }
 
     template <typename ANY>
-    void track(QFuture<ANY> future) {
+    void track(QFuture<ANY> future) const {
         deferredFuture->track(future);
     }
 
-    void setProgressValue(int value) {
+    void setProgressValue(int value) const {
         deferredFuture->setProgressValue(value);
     }
 
-    void setProgressRange(int minimum, int maximum) {
+    void setProgressRange(int minimum, int maximum) const {
         deferredFuture->setProgressRange(minimum, maximum);
     }
 
-    void reportStarted() {
+    void reportStarted() const {
         deferredFuture->reportStarted();
     }
 
@@ -1469,6 +1468,32 @@ auto deferred() -> Deferred<T> {
 
 inline Combinator combine(CombinatorMode mode = FailFast) {
     return Combinator(mode);
+}
+
+QFuture<void> reportFinish()
+{
+    QFutureInterface<void> fi;
+    fi.reportFinished();
+    return QFuture<void>(&fi);
+}
+
+template <typename T> 
+QFuture<T> reportFinish(const T &val) 
+{
+    QFutureInterface<T> fi;
+    fi.reportFinished(&val);
+    return QFuture<T>(&fi);
+}
+
+QFuture<void> reportCancel()
+{
+    return QFuture<void>();
+}
+
+template <typename T> 
+QFuture<T> reportCancel(const T &val) 
+{
+    return QFuture<T>();
 }
 
 }
