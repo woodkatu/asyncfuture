@@ -1487,7 +1487,7 @@ inline Combinator combine(CombinatorMode mode = FailFast) {
     return Combinator(mode);
 }
 
-QFuture<void> reportFinish()
+inline QFuture<void> reportFinish()
 {
     QFutureInterface<void> fi;
     fi.reportFinished();
@@ -1502,7 +1502,7 @@ QFuture<T> reportFinish(const T &val)
     return QFuture<T>(&fi);
 }
 
-QFuture<void> reportCancel()
+inline QFuture<void> reportCancel()
 {
     return QFuture<void>();
 }
