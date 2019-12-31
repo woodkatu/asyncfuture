@@ -613,6 +613,23 @@ public:
             }
         }
 
+        /* @note
+         * void test()
+         * {
+         *     auto defer = AsyncFuture::deferred<int>();
+         *     auto thread = QThread::create([defer]{
+         *         qDebug() << "qthread:" << QThread::currentThread();
+         *         defer.complete(1);
+         *     });
+         *     thread->start();
+         * }
+         * 
+         * such code would create a DeferredFuture in main thread,
+         * and delete it in qthread for decWeakRefCount() excuted. may cause crush.
+         * 
+         * @todo fix this issue
+         */
+
         if (strongRefCount == 0 && isFinished()) {
             delete this;
         }
@@ -1490,10 +1507,11 @@ QFuture<void> reportCancel()
     return QFuture<void>();
 }
 
-template <typename T> 
-QFuture<T> reportCancel(const T &val) 
-{
-    return QFuture<T>();
-}
+//useless
+// template <typename T> 
+// QFuture<T> reportCancel(const T &val) 
+// {
+//     return QFuture<T>();
+// }
 
 }
