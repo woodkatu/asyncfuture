@@ -668,6 +668,23 @@ public:
             }
         }
 
+        /* @note
+         * void test()
+         * {
+         *     auto defer = AsyncFuture::deferred<int>();
+         *     auto thread = QThread::create([defer]{
+         *         qDebug() << "qthread:" << QThread::currentThread();
+         *         defer.complete(1);
+         *     });
+         *     thread->start();
+         * }
+         * 
+         * such code would create a DeferredFuture in main thread,
+         * and delete it in qthread for decWeakRefCount() excuted. may cause crush.
+         * 
+         * @todo fix this issue
+         */
+
         if (strongRefCount == 0 && isFinished()) {
             //This prevents deletion this on a seperate thread
             if(thread() != QThread::currentThread()) {
