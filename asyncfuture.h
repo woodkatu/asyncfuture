@@ -1507,11 +1507,10 @@ inline QFuture<void> reportCancel()
     return QFuture<void>();
 }
 
-//useless
-// template <typename T> 
-// QFuture<T> reportCancel(const T &val) 
-// {
-//     return QFuture<T>();
-// }
+template <typename T> 
+QFuture<T> reportCancel(const T &val) 
+{
+    return QFuture<T>();
+}
 
 }
