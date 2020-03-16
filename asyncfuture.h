@@ -1596,35 +1596,34 @@ public:
     }
 
     template <typename ANY>
-    void complete(QFuture<QFuture<ANY>> future) {
+    void complete(QFuture<QFuture<ANY>> future) const {
         Q_UNUSED(future);
-
         static_assert(Private::False<ANY>::value, "Deferred<void>::complete(QFuture<QFuture<ANY>>) is not supported");
     }
 
-    void complete(QFuture<void> future) {
+    void complete(QFuture<void> future) const {
         deferredFuture->complete(future);
     }
 
-    void complete() {
+    void complete() const {
         deferredFuture->complete();
     }
 
     template <typename ANY>
-    void cancel(QFuture<ANY> future) {
+    void cancel(QFuture<ANY> future) const {
         deferredFuture->cancel(future);
     }
 
-    void cancel() {
+    void cancel() const {
         deferredFuture->cancel();
     }
 
     template <typename ANY>
-    void track(QFuture<ANY> future) {
+    void track(QFuture<ANY> future) const {
         deferredFuture->track(future);
     }
 
-    void reportStarted() {
+    void reportStarted() const {
         deferredFuture->reportStarted();
     }
 
