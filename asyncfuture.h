@@ -351,9 +351,7 @@ void watch(QFuture<T> future,
     if (owner) {
         // Don't set parent as the context object as it may live in different thread
         QObject::connect(owner, &QObject::destroyed,
-                         watcher, [watcher]() {
-            delete watcher;
-        });
+                         watcher, [watcher] { delete watcher; });
     }
 
     if (contextObject) {
@@ -577,9 +575,8 @@ public:
               nullptr,
               onFinished,
               onCanceled,
-              [](int){},
-        [](int,int){}
-        );
+              [](int) {},
+              [](int, int) {});
 
         track(future);
     }
@@ -604,7 +601,7 @@ public:
               onFinished,
               onCanceled,
               [](int){},
-        [](int,int){});
+              [](int,int){});
         // It don't track for the first level of future
     }
 
@@ -644,8 +641,7 @@ public:
               onFinished,
               onCanceled,
               [](int){},
-              [](int,int){}
-        );
+              [](int,int){});
     }
 
     void incWeakRefCount() {
@@ -849,20 +845,20 @@ public:
     {
         //Cancel all sub futures if this future is cancelled
         Private::watch(
-                    future(),
-                    this,
-                    this,
-                    [](){},
-        [this](){
-            mutex.lock();
-            for(FutureInfo* info : futures) {
-                info->childFuture.cancel();
-            }
-            mutex.unlock();
-        },
-        [](int){},
-        [](int, int){}
-        );
+            future(),
+            this,
+            this,
+            []() {},
+            [this]() {
+                mutex.lock();
+                for (FutureInfo *info : futures)
+                {
+                    info->childFuture.cancel();
+                }
+                mutex.unlock();
+            },
+            [](int) {},
+            [](int, int) {});
     }
 
     ~CombinedFuture() {
