@@ -142,7 +142,7 @@ struct signal_traits<R (C::*)()> {
 
 template <typename R, typename C, typename ARG0>
 struct signal_traits<R (C::*)(ARG0)> {
-    typedef ARG0 result_type;
+    typedef typename std::decay<ARG0>::type result_type;
 };
 
 template <typename T>
@@ -334,49 +334,80 @@ void runInMainThread(F func) {
  * @param contextObject Determine the receiver callback
  */
 
-template <typename T, typename Finished, typename Canceled>
+template <typename T, typename Finished, typename Canceled, typename Progress, typename ProgressRange>
 void watch(QFuture<T> future,
-           QObject* owner,
-           QObject* contextObject,
+		   const QObject* owner,
+		   const QObject* contextObject,
            Finished finished,
-           Canceled canceled) {
+           Canceled canceled,
+           Progress progress,
+           ProgressRange progressRange) {
 
     Q_ASSERT(owner);
-    QPointer<QObject> ownerAlive = owner;
+	QPointer<const QObject> ownerAlive = owner;
 
-    QFutureWatcher<T> *watcher = new QFutureWatcher<T>();
+    QPointer<QFutureWatcher<T>> watcher(new QFutureWatcher<T>());
 
     if (owner) {
         // Don't set parent as the context object as it may live in different thread
         QObject::connect(owner, &QObject::destroyed,
-                         watcher, &QObject::deleteLater);
+                         watcher, [watcher] { delete watcher; });
     }
 
     if (contextObject) {
 
         QObject::connect(watcher, &QFutureWatcher<T>::finished,
                          contextObject, [=]() {
-            delete watcher;
+            bool watcherCancelled = true;
+            if(!watcher.isNull()) {
+                watcherCancelled = watcher->isCanceled();
+                delete watcher;
+            } else {
+                return;
+            }
+
             if (ownerAlive.isNull()) {
                 return;
             }
-            finished();
+
+            if(!watcherCancelled) {
+                finished();
+            } else {
+                canceled();
+            }
         });
 
         QObject::connect(watcher, &QFutureWatcher<T>::canceled,
                          contextObject, [=]() {
-            delete watcher;
+            if(!watcher.isNull()) {
+                delete watcher;
+            } else {
+                return;
+            }
             if (ownerAlive.isNull()) {
                 return;
             }
             canceled();
         });
 
-    } else {
 
+        QObject::connect(watcher, &QFutureWatcher<T>::progressValueChanged,
+                         contextObject, [=](int value) {
+            progress(value);
+        });
+
+        QObject::connect(watcher, &QFutureWatcher<T>::progressRangeChanged,
+                         contextObject, [=](int min, int max) {
+            progressRange(min, max);
+        });
+
+
+    } else {
         QObject::connect(watcher, &QFutureWatcher<T>::finished,
                          [=]() {
-            delete watcher;
+            if(!watcher.isNull()) {
+                delete watcher;
+            }
             if (ownerAlive.isNull()) {
                 return;
             }
@@ -385,12 +416,26 @@ void watch(QFuture<T> future,
 
         QObject::connect(watcher, &QFutureWatcher<T>::canceled,
                          [=]() {
-            delete watcher;
+            if(!watcher.isNull()) {
+                delete watcher;
+            }
             if (ownerAlive.isNull()) {
                 return;
             }
             canceled();
         });
+
+
+        QObject::connect(watcher, &QFutureWatcher<T>::progressValueChanged,
+                         [=](int value) {
+            progress(value);
+        });
+
+        QObject::connect(watcher, &QFutureWatcher<T>::progressRangeChanged,
+                         [=](int min, int max) {
+            progressRange(min, max);
+        });
+
     }
 
     if ((QThread::currentThread() != QCoreApplication::instance()->thread()) &&
@@ -436,14 +481,14 @@ public:
             if (thiz.isNull()) {
                 return;
             }
-            thiz->setProgressValue(value);
+            thiz->setWatchProgressValue(value);
         });
 
         QObject::connect(watcher, &QFutureWatcher<ANY>::progressRangeChanged, this, [=](int min, int max) {
             if (thiz.isNull()) {
                 return;
             }
-            thiz->setProgressRange(min, max);
+            thiz->setWatchProgressRange(min, max);
         });
 
         QObject::connect(watcher, &QFutureWatcher<ANY>::started, this, [=](){
@@ -460,8 +505,8 @@ public:
 
         watcher->setFuture(future);
 
-        QFutureInterface<T>::setProgressRange(future.progressMinimum(), future.progressMaximum());
-        QFutureInterface<T>::setProgressValue(future.progressValue());
+        setWatchProgressRange(future.progressMinimum(), future.progressMaximum());
+        setWatchProgressValue(future.progressValue());
 
         if (future.isStarted()) {
             QFutureInterface<T>::reportStarted();
@@ -529,7 +574,9 @@ public:
               this,
               nullptr,
               onFinished,
-              onCanceled);
+              onCanceled,
+              [](int) {},
+              [](int, int) {});
 
         track(future);
     }
@@ -550,9 +597,11 @@ public:
 
         watch(future,
               this,
-              0,
+              nullptr,
               onFinished,
-              onCanceled);
+              onCanceled,
+              [](int){},
+              [](int,int){});
         // It don't track for the first level of future
     }
 
@@ -565,7 +614,7 @@ public:
     }
 
     template <typename Member>
-    void cancel(QObject* sender, Member member) {
+	void cancel(const QObject* sender, Member member) {
         incWeakRefCount();
         QObject::connect(sender, member,
                          this, [=]() {
@@ -588,9 +637,11 @@ public:
 
         watch(future,
               this,
-              0,
+              nullptr,
               onFinished,
-              onCanceled);
+              onCanceled,
+              [](int){},
+              [](int,int){});
     }
 
     void incWeakRefCount() {
@@ -631,7 +682,12 @@ public:
          */
 
         if (strongRefCount == 0 && isFinished()) {
-            delete this;
+            //This prevents deletion this on a seperate thread
+            if(thread() != QThread::currentThread()) {
+                QMetaObject::invokeMethod(this, "deleteLater");
+            } else {
+                delete this;
+            }
         }
     }
 
@@ -681,11 +737,27 @@ public:
         QFutureInterface<T>::reportResult(value.value);
     }
 
+    void setParentProgressValue(int value) {
+        mutex.lock();
+        parentProgress.value = value;
+        updateProgressValue();
+        mutex.unlock();
+    }
+
+    void setParentProgressRange(int min, int max) {
+        mutex.lock();
+        parentProgress.min = min;
+        parentProgress.max = max;
+        updateProgressRanges();
+        mutex.unlock();
+    }
+
 protected:
     DeferredFuture(QObject* parent = nullptr): QObject(parent),
                                          QFutureInterface<T>(QFutureInterface<T>::Running),
                                          refCount(1),
                                          strongRefCount(0) {
+            moveToThread(QCoreApplication::instance()->thread());
     }
 
     QMutex mutex;
@@ -697,6 +769,47 @@ private:
 
     // Unless it is zero, this object will not be destroyed.
     int strongRefCount;
+
+    class Progress {
+    public:
+        int range() { return max - min; }
+
+        int value = 0;
+        int min = 0;
+        int max = 0;
+    };
+
+    Progress parentProgress;
+    Progress watchProgress;
+
+    void setWatchProgressValue(int value) {
+        mutex.lock();
+        watchProgress.value = value;
+        updateProgressValue();
+        mutex.unlock();
+    }
+
+    void setWatchProgressRange(int min, int max) {
+        mutex.lock();
+        watchProgress.min = min;
+        watchProgress.max = max;
+        updateProgressRanges();
+        mutex.unlock();
+    }
+
+    void updateProgressRanges() {
+        int newMax = parentProgress.range() + watchProgress.range();
+        if(QFutureInterface<T>::progressMaximum() != newMax) {
+            QFutureInterface<T>::setProgressRange(0, newMax);
+        }
+    }
+
+    void updateProgressValue() {
+        int newProgress = parentProgress.value + watchProgress.value;
+        if(QFutureInterface<T>::progressValue() != newProgress) {
+            QFutureInterface<T>::setProgressValue(newProgress);
+        }
+    }
 
     /// The future is already finished. It will take effect immediately
     template <typename ANY>
@@ -722,11 +835,36 @@ protected:
 };
 
 class CombinedFuture: public DeferredFuture<void> {
+
 public:
-    CombinedFuture(bool settleAllModeArg = false) : DeferredFuture<void>(), settleAllMode(settleAllModeArg) {
-        settledCount = 0;
-        count = 0;
-        anyCanceled = false;
+    CombinedFuture(bool settleAllModeArg = false) : DeferredFuture<void>(),
+        settledCount(0),
+        count(0),
+        anyCanceled(false),
+        settleAllMode(settleAllModeArg)
+    {
+        //Cancel all sub futures if this future is cancelled
+        Private::watch(
+            future(),
+            this,
+            this,
+            []() {},
+            [this]() {
+                mutex.lock();
+                for (FutureInfo *info : futures)
+                {
+                    info->childFuture.cancel();
+                }
+                mutex.unlock();
+            },
+            [](int) {},
+            [](int, int) {});
+    }
+
+    ~CombinedFuture() {
+        for(auto progress : futures) {
+            delete progress;
+        }
     }
 
     template <typename T>
@@ -739,7 +877,35 @@ public:
 
         mutex.lock();
         int index = count++;
-        QFutureInterface<void>::setProgressRange(0, count);
+
+
+        auto info = new FutureInfo(future);
+        futures.append(info);
+        Q_ASSERT(index == futures.size() - 1);
+
+        if(future.progressMaximum() > 0) {
+            info->max = future.progressMaximum();
+        }
+        info->value = future.progressValue();
+
+        auto progressFunc = [=](int progressValue) {
+            mutex.lock();
+            info->value = progressValue;
+            updateProgress();
+            mutex.unlock();
+        };
+
+        auto progressRangeFunc = [=](int min, int max) {
+            Q_UNUSED(min);
+            mutex.lock();
+            if(max > 0) {
+                info->max = max;
+            }
+            updateProgressRange();
+            mutex.unlock();
+        };
+
+        QFutureInterface<void>::setProgressRange(0, progressMaximum() + info->max);
         mutex.unlock();
 
         Private::watch(future, this, 0,
@@ -749,7 +915,10 @@ public:
         },[=]() {
             cancelFutureAt(index);
             decWeakRefCount();
-        });
+        },
+        progressFunc,
+        progressRangeFunc
+        );
     }
 
     static QSharedPointer<CombinedFuture> create(bool settleAllMode) {
@@ -767,16 +936,29 @@ public:
     }
 
 private:
+    class FutureInfo {
+    public:
+        FutureInfo() = default;
+        FutureInfo(QFuture<void> childFuture) :
+            childFuture(childFuture)
+        {}
+
+        int max = 1;
+        int value = 0;
+        QFuture<void> childFuture;
+    };
+
     int settledCount;
     int count;
     bool anyCanceled;
     bool settleAllMode;
+    QVector<FutureInfo*> futures;
 
     void completeFutureAt(int index) {
         Q_UNUSED(index);
         mutex.lock();
         settledCount++;
-        QFutureInterface<void>::setProgressValue(settledCount);
+        finishProgress(index);
         mutex.unlock();
         checkFulfilled();
     }
@@ -787,7 +969,7 @@ private:
         mutex.lock();
         settledCount++;
         anyCanceled = true;
-        QFutureInterface<void>::setProgressValue(settledCount);
+        finishProgress(index);
         mutex.unlock();
 
         checkFulfilled();
@@ -810,6 +992,35 @@ private:
                 complete();
             }
         }
+    }
+
+    void updateProgressRange() {
+        int max = std::accumulate(futures.begin(),
+                                  futures.end(),
+                                  0,
+                                  [](int current, const FutureInfo* info)
+        {
+            return info->max + current;
+        });
+
+        QFutureInterface<void>::setProgressRange(0, max);
+    }
+
+    void updateProgress() {
+        int value = std::accumulate(futures.begin(),
+                                  futures.end(),
+                                  0,
+                                  [](int current, const FutureInfo* info)
+        {
+            return info->value + current;
+        });
+
+        QFutureInterface<void>::setProgressValue(value);
+    }
+
+    void finishProgress(int index) {
+        futures[index]->value = futures[index]->max;
+        updateProgress();
     }
 
 };
@@ -1018,9 +1229,12 @@ eval(Functor functor, QFuture<T> future) {
  * e.g DeferredFuture<int> = Value<QFuture<int>>
  */
 template <typename DeferredType, typename RetType, typename T, typename Completed, typename Canceled>
-static QFuture<DeferredType> execute(QFuture<T> future, QObject* contextObject, Completed onCompleted, Canceled onCanceled) {
+static QFuture<DeferredType> execute(QFuture<T> future, const QObject* contextObject, Completed onCompleted, Canceled onCanceled) {
 
     auto defer = DeferredFuture<DeferredType>::create();
+
+    defer->setParentProgressValue(future.progressValue());
+    defer->setParentProgressRange(future.progressMinimum(), future.progressMaximum());
 
     watch(future,
           contextObject,
@@ -1038,11 +1252,27 @@ static QFuture<DeferredType> execute(QFuture<T> future, QObject* contextObject, 
     }, [=]() {
         onCanceled();
         defer->cancel();
+    }, [=](int progressValue) {
+        defer->setParentProgressValue(progressValue);
+    }, [=](int min, int max) {
+        defer->setParentProgressRange(min, max);
     });
 
     if (contextObject) {
         defer->cancel(contextObject, &QObject::destroyed);
     }
+
+
+    //Watch the defer future and propgate changes up to the parent future
+    auto futurePtr = QSharedPointer<QFuture<void>>::create(future);
+    watch(defer->future(),
+          contextObject,
+          contextObject,
+          []() {}, //onComplete
+          [futurePtr]() { futurePtr->cancel(); },
+          [](int){},
+          [](int,int){}
+        );
 
     return defer->future();
 }
@@ -1077,28 +1307,56 @@ public:
     typename std::enable_if< !Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
     Observable<typename Private::function_traits<Completed>::result_type>
     >::type
-    context(QObject* contextObject, Completed functor)  {
+	context(const QObject* contextObject, Completed functor)  {
         /* functor return non-QFuture type */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("context(callback): ", Completed);
 
         return _context<typename Private::function_traits<Completed>::result_type,
                        typename Private::function_traits<Completed>::result_type
-                >(contextObject, functor);
+                >(contextObject, functor, [](){});
     }
 
     template <typename Completed>
     typename std::enable_if< Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
     Observable<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type>
     >::type
-    context(QObject* contextObject, Completed functor)  {
+	context(const QObject* contextObject, Completed functor)  {
         /* functor returns a QFuture */
 
         ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("context(callback): ", Completed);
 
         return _context<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type,
                        typename Private::function_traits<Completed>::result_type
-                >(contextObject, functor);
+                >(contextObject, functor, [](){});
+    }
+
+    template <typename Completed, typename Canceled>
+    typename std::enable_if< !Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
+    Observable<typename Private::function_traits<Completed>::result_type>
+    >::type
+    context(const QObject* contextObject, Completed onCompleted, Canceled onCanceled)  {
+        /* functor return non-QFuture type */
+
+        ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("context(callback): ", Completed);
+
+        return _context<typename Private::function_traits<Completed>::result_type,
+                typename Private::function_traits<Completed>::result_type
+                >(contextObject, onCompleted, onCanceled);
+    }
+
+    template <typename Completed, typename Canceled>
+    typename std::enable_if< Private::future_traits<typename Private::function_traits<Completed>::result_type>::is_future,
+    Observable<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type>
+    >::type
+    context(const QObject* contextObject, Completed onCompleted, Canceled onCanceled)  {
+        /* functor returns a QFuture */
+
+        ASYNC_FUTURE_CALLBACK_STATIC_ASSERT("context(callback): ", Completed);
+
+        return _context<typename Private::future_traits<typename Private::function_traits<Completed>::result_type>::arg_type,
+                typename Private::function_traits<Completed>::result_type
+                >(contextObject, onCompleted, onCanceled);
     }
 
     /* subscribe function */
@@ -1248,13 +1506,13 @@ public:
     }
 
 private:
-    template <typename ObservableType, typename RetType, typename Completed>
-    Observable<ObservableType> _context(QObject* contextObject, Completed functor)  {
+    template <typename ObservableType, typename RetType, typename Completed, typename Canceled>
+    Observable<ObservableType> _context(const QObject* contextObject, Completed onCompleted, Canceled onCanceled)  {
 
         auto future = Private::execute<ObservableType, RetType>(m_future,
                                                                contextObject,
-                                                               functor,
-                                                               [](){});
+                                                               onCompleted,
+                                                               onCanceled);
 
         return Observable<ObservableType>(future);
     }
@@ -1262,12 +1520,9 @@ private:
     template <typename ObservableType, typename RetType, typename Completed, typename Canceled>
     Observable<ObservableType> _subscribe(Completed onCompleted, Canceled onCanceled) {       
 
-        auto future = Private::execute<ObservableType, RetType>(m_future,
-                                                               QCoreApplication::instance(),
-                                                               onCompleted,
-                                                               onCanceled);
-
-        return Observable<ObservableType>(future);
+        return _context<ObservableType, RetType, Completed, Canceled>(QCoreApplication::instance(),
+                                                                      onCompleted,
+                                                                      onCanceled);
     }
 
 };
@@ -1407,6 +1662,14 @@ public:
     }
 
     template <typename T>
+    Combinator& operator<<(QList<QFuture<T>> futures) {
+        for(auto future : futures) {
+            combinedFuture->addFuture(future);
+        }
+        return *this;
+    }
+
+    template <typename T>
     Combinator& operator<<(Deferred<T> deferred) {
         combinedFuture->addFuture(deferred.future());
         return *this;
@@ -1507,7 +1770,7 @@ inline QFuture<void> reportCancel()
 }
 
 template <typename T> 
-QFuture<T> reportCancel(const T &val) 
+QFuture<T> reportCancel() 
 {
     return QFuture<T>();
 }
